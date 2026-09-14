@@ -1,7 +1,7 @@
 ---
 name: "Strm Download"
 guid: "a7f4e6b0-3c2d-4e1a-9b8f-6d5c4b3a2f10"
-version: "1.0.2.0"
+version: "1.0.3.0"
 targetAbi: "12.0.0.0"
 framework: "net10.0"
 overview: "Rende scaricabile via il download nativo il contenuto reale puntato dai file .strm"
@@ -12,9 +12,14 @@ description: >
   scarica dal server il file remoto invece del piccolo file di testo .strm.
 category: "General"
 owner: "antoniopanariello2000"
+imageUrl: "https://raw.githubusercontent.com/antoniopanariello2000/jellyfin-strm-download/master/images/logo.png"
 artifacts:
 - "Jellyfin.Plugin.StrmDownload.dll"
+- "meta.json"
+- "logo.png"
 changelog: >
+  - 1.0.3.0: Aggiunto il logo del plugin (visibile in Dashboard > Plugin e
+    nel Catalogo).
   - 1.0.2.0: Riprogettato per intercettare l'endpoint nativo di download a
     livello di middleware, cosi' funziona per tutti i client (non solo
     Jellyfin Web).

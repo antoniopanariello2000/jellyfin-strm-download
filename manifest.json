@@ -6,7 +6,16 @@
         "overview": "Download reale per i file .strm dal pulsante Download nativo",
         "owner": "antoniopanariello2000",
         "category": "General",
+        "imageUrl": "https://raw.githubusercontent.com/antoniopanariello2000/jellyfin-strm-download/master/images/logo.png",
         "versions": [
+            {
+                "version": "1.0.3.0",
+                "changelog": "Aggiunto il logo del plugin (visibile in Dashboard > Plugin e nel Catalogo).",
+                "targetAbi": "12.0.0.0",
+                "sourceUrl": "https://github.com/antoniopanariello2000/jellyfin-strm-download/releases/download/v1.0.3.0/strmdownload_1.0.3.0.zip",
+                "checksum": "b35c103a6753692543f83217871e2ef6",
+                "timestamp": "2026-09-14T09:45:26Z"
+            },
             {
                 "version": "1.0.2.0",
                 "changelog": "Riprogettato: intercetta direttamente l'endpoint nativo Items/{itemId}/Download a livello di middleware, prima che raggiunga il controller di Jellyfin. Funziona per tutti i client (Web, app mobile come Moonfin, ecc.), non solo per Jellyfin Web. Rimossi lo script iniettato nel client e l'endpoint separato, non piu' necessari.",
