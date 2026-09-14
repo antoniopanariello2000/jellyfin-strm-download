@@ -40,14 +40,14 @@ non serve alcuna modifica lato client.
    con questo URL:
 
    ```
-   https://raw.githubusercontent.com/antoniopanariello2000/jellyfin-strm-download/master/manifest.json
+   https://raw.githubusercontent.com/HLabSolutions/jellyfin-strm-download/master/manifest.json
    ```
 
 2. Vai su **Catalogo**, cerca **Strm Download**, installa.
 3. Riavvia il server.
 
 In alternativa, per un'installazione manuale: scarica lo zip dell'
-[ultima release](https://github.com/antoniopanariello2000/jellyfin-strm-download/releases/latest)
+[ultima release](https://github.com/HLabSolutions/jellyfin-strm-download/releases/latest)
 ed estrailo in `plugins/StrmDownload_<versione>/` nella cartella dati di
 Jellyfin, poi riavvia il server.
 

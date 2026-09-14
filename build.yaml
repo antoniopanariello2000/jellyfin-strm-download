@@ -11,8 +11,8 @@ description: >
   client, non solo Jellyfin Web) e, per gli elementi risolti da un file .strm,
   scarica dal server il file remoto invece del piccolo file di testo .strm.
 category: "General"
-owner: "antoniopanariello2000"
-imageUrl: "https://raw.githubusercontent.com/antoniopanariello2000/jellyfin-strm-download/master/images/logo.png"
+owner: "HLabSolutions"
+imageUrl: "https://raw.githubusercontent.com/HLabSolutions/jellyfin-strm-download/master/images/logo.png"
 artifacts:
 - "Jellyfin.Plugin.StrmDownload.dll"
 - "meta.json"

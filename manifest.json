@@ -4,15 +4,15 @@
         "name": "Strm Download",
         "description": "Rende scaricabile via il pulsante Download nativo il contenuto reale puntato dai file .strm, invece del piccolo file di testo .strm stesso.",
         "overview": "Download reale per i file .strm dal pulsante Download nativo",
-        "owner": "antoniopanariello2000",
+        "owner": "HLabSolutions",
         "category": "General",
-        "imageUrl": "https://raw.githubusercontent.com/antoniopanariello2000/jellyfin-strm-download/master/images/logo.png",
+        "imageUrl": "https://raw.githubusercontent.com/HLabSolutions/jellyfin-strm-download/master/images/logo.png",
         "versions": [
             {
                 "version": "1.0.3.0",
                 "changelog": "Aggiunto il logo del plugin (visibile in Dashboard > Plugin e nel Catalogo).",
                 "targetAbi": "12.0.0.0",
-                "sourceUrl": "https://github.com/antoniopanariello2000/jellyfin-strm-download/releases/download/v1.0.3.0/strmdownload_1.0.3.0.zip",
+                "sourceUrl": "https://github.com/HLabSolutions/jellyfin-strm-download/releases/download/v1.0.3.0/strmdownload_1.0.3.0.zip",
                 "checksum": "b35c103a6753692543f83217871e2ef6",
                 "timestamp": "2026-09-14T09:45:26Z"
             },
@@ -20,7 +20,7 @@
                 "version": "1.0.2.0",
                 "changelog": "Riprogettato: intercetta direttamente l'endpoint nativo Items/{itemId}/Download a livello di middleware, prima che raggiunga il controller di Jellyfin. Funziona per tutti i client (Web, app mobile come Moonfin, ecc.), non solo per Jellyfin Web. Rimossi lo script iniettato nel client e l'endpoint separato, non piu' necessari.",
                 "targetAbi": "12.0.0.0",
-                "sourceUrl": "https://github.com/antoniopanariello2000/jellyfin-strm-download/releases/download/v1.0.2.0/strmdownload_1.0.2.0.zip",
+                "sourceUrl": "https://github.com/HLabSolutions/jellyfin-strm-download/releases/download/v1.0.2.0/strmdownload_1.0.2.0.zip",
                 "checksum": "b3bc015f27df0cd83030c870535e4137",
                 "timestamp": "2026-09-14T09:12:25Z"
             },
@@ -28,7 +28,7 @@
                 "version": "1.0.1.0",
                 "changelog": "Ricompilato per Jellyfin 12.0 (net10.0). La 1.0.0.0 era compilata per Jellyfin 10.10.x ed era binariamente incompatibile con Jellyfin 12.0 (TypeLoadException su Jellyfin.Data.Entities.User, spostato in Jellyfin.Database.Implementations.Entities.User).",
                 "targetAbi": "12.0.0.0",
-                "sourceUrl": "https://github.com/antoniopanariello2000/jellyfin-strm-download/releases/download/v1.0.1.0/strmdownload_1.0.1.0.zip",
+                "sourceUrl": "https://github.com/HLabSolutions/jellyfin-strm-download/releases/download/v1.0.1.0/strmdownload_1.0.1.0.zip",
                 "checksum": "08bde6ccf4c9bb38be53610491417b8e",
                 "timestamp": "2026-09-14T09:00:15Z"
             },
@@ -36,7 +36,7 @@
                 "version": "1.0.0.0",
                 "changelog": "Prima versione. Download proxy per i file .strm e hook del pulsante Download nativo in Jellyfin Web.",
                 "targetAbi": "10.10.0.0",
-                "sourceUrl": "https://github.com/antoniopanariello2000/jellyfin-strm-download/releases/download/v1.0.0.0/strmdownload_1.0.0.0.zip",
+                "sourceUrl": "https://github.com/HLabSolutions/jellyfin-strm-download/releases/download/v1.0.0.0/strmdownload_1.0.0.0.zip",
                 "checksum": "4fbd60e1842e579d016236bce801d241",
                 "timestamp": "2026-09-14T08:40:13Z"
             }
