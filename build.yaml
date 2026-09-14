@@ -1,0 +1,19 @@
+---
+name: "Strm Download"
+guid: "a7f4e6b0-3c2d-4e1a-9b8f-6d5c4b3a2f10"
+version: "1.0.0.0"
+targetAbi: "10.10.0.0"
+framework: "net8.0"
+overview: "Rende scaricabile via il pulsante Download nativo il contenuto reale puntato dai file .strm"
+description: >
+  Aggiunge il supporto al download del contenuto reale referenziato dai file
+  .strm: intercetta il pulsante Download nativo di Jellyfin Web e, per gli
+  elementi risolti da un file .strm, scarica dal server il file remoto invece
+  del piccolo file di testo .strm.
+category: "General"
+owner: "antoniopanariello2000"
+artifacts:
+- "Jellyfin.Plugin.StrmDownload.dll"
+changelog: >
+  - 1.0.0.0: Prima versione. Download proxy per i file .strm e hook del
+    pulsante Download nativo in Jellyfin Web.
