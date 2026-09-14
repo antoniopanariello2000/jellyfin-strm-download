@@ -1,0 +1,20 @@
+[
+    {
+        "guid": "a7f4e6b0-3c2d-4e1a-9b8f-6d5c4b3a2f10",
+        "name": "Strm Download",
+        "description": "Rende scaricabile via il pulsante Download nativo il contenuto reale puntato dai file .strm, invece del piccolo file di testo .strm stesso.",
+        "overview": "Download reale per i file .strm dal pulsante Download nativo",
+        "owner": "antoniopanariello2000",
+        "category": "General",
+        "versions": [
+            {
+                "version": "1.0.0.0",
+                "changelog": "Prima versione. Download proxy per i file .strm e hook del pulsante Download nativo in Jellyfin Web.",
+                "targetAbi": "10.10.0.0",
+                "sourceUrl": "https://github.com/antoniopanariello2000/jellyfin-strm-download/releases/download/v1.0.0.0/strmdownload_1.0.0.0.zip",
+                "checksum": "4fbd60e1842e579d016236bce801d241",
+                "timestamp": "2026-09-14T08:40:13Z"
+            }
+        ]
+    }
+]

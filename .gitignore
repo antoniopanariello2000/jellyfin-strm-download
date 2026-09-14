@@ -3,3 +3,5 @@ obj/
 .vs/
 *.user
 .claude/
+Jellyfin.Plugin.StrmDownload/artifact/
+*.zip
