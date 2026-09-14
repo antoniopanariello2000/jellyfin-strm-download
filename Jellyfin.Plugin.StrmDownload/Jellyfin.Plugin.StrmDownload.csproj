@@ -5,7 +5,7 @@
     <RootNamespace>Jellyfin.Plugin.StrmDownload</RootNamespace>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <Nullable>enable</Nullable>
-    <Version>1.0.1.0</Version>
+    <Version>1.0.2.0</Version>
   </PropertyGroup>
 
   <ItemGroup>
@@ -20,8 +20,6 @@
   <ItemGroup>
     <None Remove="Configuration\configPage.html" />
     <EmbeddedResource Include="Configuration\configPage.html" />
-    <None Remove="Web\strm-download-client.js" />
-    <EmbeddedResource Include="Web\strm-download-client.js" />
   </ItemGroup>
 
 </Project>

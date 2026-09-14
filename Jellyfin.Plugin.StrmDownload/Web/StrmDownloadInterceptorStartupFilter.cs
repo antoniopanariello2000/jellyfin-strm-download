@@ -5,17 +5,18 @@ using Microsoft.AspNetCore.Hosting;
 namespace Jellyfin.Plugin.StrmDownload.Web;
 
 /// <summary>
-/// Inserts <see cref="ScriptInjectionMiddleware"/> at the very front of
-/// Jellyfin's ASP.NET Core pipeline so it can intercept index.html responses.
+/// Inserts <see cref="StrmDownloadInterceptorMiddleware"/> at the very front
+/// of Jellyfin's ASP.NET Core pipeline so it can intercept download requests
+/// before they reach Jellyfin's own controller.
 /// </summary>
-public class ScriptInjectionStartupFilter : IStartupFilter
+public class StrmDownloadInterceptorStartupFilter : IStartupFilter
 {
     /// <inheritdoc />
     public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next)
     {
         return app =>
         {
-            app.UseMiddleware<ScriptInjectionMiddleware>();
+            app.UseMiddleware<StrmDownloadInterceptorMiddleware>();
             next(app);
         };
     }

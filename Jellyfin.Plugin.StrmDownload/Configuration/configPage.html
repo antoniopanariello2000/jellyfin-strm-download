@@ -11,20 +11,20 @@
                     <div class="verticalSection">
                         <h2>Strm Download</h2>
                         <p>
-                            Quando abilitato, il pulsante "Download" nativo di Jellyfin Web
-                            scaricherà il contenuto reale puntato dai file .strm invece del
-                            piccolo file di testo .strm stesso. Funziona solo per Jellyfin Web
-                            (browser); i client nativi non sono interessati da questa opzione.
+                            Quando abilitato, qualunque richiesta di download nativo
+                            (Jellyfin Web, app mobile, ecc.) per un elemento basato su un
+                            file .strm scaricherà il contenuto reale puntato dal file invece
+                            del piccolo file di testo .strm stesso.
                         </p>
                     </div>
                     <div class="checkboxContainer checkboxContainer-withDescription">
                         <label>
                             <input id="EnableNativeDownloadHook" type="checkbox" is="emby-checkbox" />
-                            <span>Abilita l'hook sul pulsante Download nativo</span>
+                            <span>Abilita l'intercettazione del download nativo</span>
                         </label>
                         <div class="fieldDescription checkboxFieldDescription">
-                            Se disattivata, il pulsante Download nativo torna al comportamento
-                            di default di Jellyfin (nessuna modifica alla pagina web).
+                            Se disattivata, il download nativo torna al comportamento di
+                            default di Jellyfin (scarica il file .strm cos&igrave; com'&egrave;).
                         </div>
                     </div>
                     <div>

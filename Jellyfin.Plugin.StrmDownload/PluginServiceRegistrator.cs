@@ -14,6 +14,6 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
     /// <inheritdoc />
     public void RegisterServices(IServiceCollection serviceCollection, IServerApplicationHost applicationHost)
     {
-        serviceCollection.AddSingleton<IStartupFilter, ScriptInjectionStartupFilter>();
+        serviceCollection.AddSingleton<IStartupFilter, StrmDownloadInterceptorStartupFilter>();
     }
 }
