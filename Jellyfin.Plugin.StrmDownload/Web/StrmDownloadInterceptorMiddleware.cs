@@ -11,6 +11,8 @@ using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Net;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
+using HeaderNames = Microsoft.Net.Http.Headers.HeaderNames;
+using HeaderUtilities = Microsoft.Net.Http.Headers.HeaderUtilities;
 
 namespace Jellyfin.Plugin.StrmDownload.Web;
 
@@ -32,6 +34,14 @@ public class StrmDownloadInterceptorMiddleware
     /// of <see cref="Stream.CopyToAsync(Stream)"/>.
     /// </summary>
     private const int CopyBufferSize = 81920;
+
+    /// <summary>
+    /// Conditional range request headers forwarded to the upstream server.
+    /// Range and If-Range belong together: If-Range lets the upstream fall back
+    /// to a full 200 response when the validator no longer matches, which is
+    /// what makes resuming against a changed file safe.
+    /// </summary>
+    private static readonly string[] ForwardedRequestHeaders = [HeaderNames.Range, HeaderNames.IfRange];
 
     private static readonly Regex DownloadPathRegex = new(
         @"/Items/(?<id>[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12})/Download/?$",
@@ -153,22 +163,25 @@ public class StrmDownloadInterceptorMiddleware
 
         var httpClient = httpClientFactory.CreateClient();
         using var requestMessage = new HttpRequestMessage(HttpMethod.Get, remoteUri);
-        if (context.Request.Headers.TryGetValue("Range", out var range))
-        {
-            requestMessage.Headers.TryAddWithoutValidation("Range", (string?)range);
-        }
+        ForwardRequestHeaders(context.Request, requestMessage);
 
         using var responseMessage = await httpClient
             .SendAsync(requestMessage, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
             .ConfigureAwait(false);
 
+        var response = context.Response;
         if (!responseMessage.IsSuccessStatusCode)
         {
-            context.Response.StatusCode = (int)responseMessage.StatusCode;
+            // Pass the upstream status through unchanged. 416 in particular has
+            // to keep its "bytes */<total>" Content-Range, since that is what
+            // lets a client correct an unsatisfiable range (RFC 9110 15.5.17).
+            response.StatusCode = (int)responseMessage.StatusCode;
+            CopyRangeHeaders(responseMessage, response);
             return;
         }
 
-        var response = context.Response;
+        // Both 200 and 206 pass through as they are. A 206 without Content-Range
+        // is an incomplete response per RFC 9110 15.3.7 and breaks resume.
         response.StatusCode = (int)responseMessage.StatusCode;
         response.ContentType = responseMessage.Content.Headers.ContentType?.ToString() ?? "application/octet-stream";
         if (responseMessage.Content.Headers.ContentLength.HasValue)
@@ -176,10 +189,8 @@ public class StrmDownloadInterceptorMiddleware
             response.ContentLength = responseMessage.Content.Headers.ContentLength;
         }
 
-        if (responseMessage.Headers.AcceptRanges.Count > 0)
-        {
-            response.Headers.AcceptRanges = "bytes";
-        }
+        CopyRangeHeaders(responseMessage, response);
+        CopyValidatorHeaders(responseMessage, response);
 
         var filename = BuildDownloadFilename(item, remoteUri);
         response.Headers.ContentDisposition = new ContentDispositionHeaderValue("attachment")
@@ -263,6 +274,71 @@ public class StrmDownloadInterceptorMiddleware
         finally
         {
             ArrayPool<byte>.Shared.Return(buffer);
+        }
+    }
+
+    /// <summary>
+    /// Forwards the client's conditional range headers to the upstream server,
+    /// so that range and resume semantics are decided by the origin and not
+    /// silently dropped by this proxy.
+    /// </summary>
+    /// <param name="request">The incoming client request.</param>
+    /// <param name="requestMessage">The outgoing upstream request.</param>
+    private static void ForwardRequestHeaders(HttpRequest request, HttpRequestMessage requestMessage)
+    {
+        foreach (var headerName in ForwardedRequestHeaders)
+        {
+            if (request.Headers.TryGetValue(headerName, out var value) && value.Count > 0)
+            {
+                requestMessage.Headers.TryAddWithoutValidation(headerName, (string?)value);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Copies the range related headers of the upstream response back to the
+    /// client. Applied to error responses too, because a 416 is only actionable
+    /// for the client when it carries Content-Range.
+    /// </summary>
+    /// <param name="responseMessage">The upstream response.</param>
+    /// <param name="response">The client response.</param>
+    private static void CopyRangeHeaders(HttpResponseMessage responseMessage, HttpResponse response)
+    {
+        if (responseMessage.Headers.AcceptRanges.Count > 0)
+        {
+            response.Headers.AcceptRanges = string.Join(", ", responseMessage.Headers.AcceptRanges);
+        }
+
+        var contentRange = responseMessage.Content.Headers.ContentRange;
+        if (contentRange is not null)
+        {
+            response.Headers.ContentRange = contentRange.ToString();
+        }
+    }
+
+    /// <summary>
+    /// Copies the cache validators and Vary from the upstream response, when it
+    /// provides them, so a client can issue a matching If-Range on resume.
+    /// </summary>
+    /// <param name="responseMessage">The upstream response.</param>
+    /// <param name="response">The client response.</param>
+    private static void CopyValidatorHeaders(HttpResponseMessage responseMessage, HttpResponse response)
+    {
+        var etag = responseMessage.Headers.ETag;
+        if (etag is not null)
+        {
+            response.Headers.ETag = etag.ToString();
+        }
+
+        var lastModified = responseMessage.Content.Headers.LastModified;
+        if (lastModified.HasValue)
+        {
+            response.Headers.LastModified = HeaderUtilities.FormatDate(lastModified.Value);
+        }
+
+        if (responseMessage.Headers.Vary.Count > 0)
+        {
+            response.Headers.Vary = string.Join(", ", responseMessage.Headers.Vary);
         }
     }
 
