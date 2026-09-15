@@ -1,6 +1,7 @@
 using System;
 using System.Buffers;
 using System.IO;
+using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text.RegularExpressions;
@@ -21,7 +22,9 @@ namespace Jellyfin.Plugin.StrmDownload.Web;
 /// Jellyfin's own controller, and serves the remote content a .strm file
 /// points to instead of the .strm text file itself. This fixes downloads for
 /// every client (Jellyfin Web, mobile apps, etc.) since they all call the
-/// same native URL - no client-side changes needed. Non-.strm items and
+/// same native URL - no client-side changes needed. GET and HEAD are both
+/// intercepted, so a client that sizes the download up front sees the real
+/// media's length rather than the .strm file's. Non-.strm items and
 /// missing items are left untouched and fall through to Jellyfin's own
 /// controller, which handles them exactly as before. Authentication and the
 /// user's download permission are checked here, because this middleware runs
@@ -78,7 +81,7 @@ public class StrmDownloadInterceptorMiddleware
     {
         if (Plugin.Instance is null
             || !Plugin.Instance.Configuration.EnableNativeDownloadHook
-            || !HttpMethods.IsGet(context.Request.Method))
+            || !(HttpMethods.IsGet(context.Request.Method) || HttpMethods.IsHead(context.Request.Method)))
         {
             await _next(context).ConfigureAwait(false);
             return;
@@ -161,36 +164,49 @@ public class StrmDownloadInterceptorMiddleware
             return;
         }
 
+        var isHeadRequest = HttpMethods.IsHead(context.Request.Method);
         var httpClient = httpClientFactory.CreateClient();
-        using var requestMessage = new HttpRequestMessage(HttpMethod.Get, remoteUri);
-        ForwardRequestHeaders(context.Request, requestMessage);
 
-        using var responseMessage = await httpClient
-            .SendAsync(requestMessage, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
-            .ConfigureAwait(false);
+        var upstream = await SendUpstreamAsync(httpClient, context, remoteUri, isHeadRequest, cancellationToken).ConfigureAwait(false);
+        using var upstreamResponse = upstream.Response;
+        var probedLength = upstream.ProbedLength;
 
         var response = context.Response;
-        if (!responseMessage.IsSuccessStatusCode)
+        if (!upstreamResponse.IsSuccessStatusCode)
         {
             // Pass the upstream status through unchanged. 416 in particular has
             // to keep its "bytes */<total>" Content-Range, since that is what
             // lets a client correct an unsatisfiable range (RFC 9110 15.5.17).
-            response.StatusCode = (int)responseMessage.StatusCode;
-            CopyRangeHeaders(responseMessage, response);
+            response.StatusCode = (int)upstreamResponse.StatusCode;
+            CopyRangeHeaders(upstreamResponse, response);
             return;
         }
 
         // Both 200 and 206 pass through as they are. A 206 without Content-Range
-        // is an incomplete response per RFC 9110 15.3.7 and breaks resume.
-        response.StatusCode = (int)responseMessage.StatusCode;
-        response.ContentType = responseMessage.Content.Headers.ContentType?.ToString() ?? "application/octet-stream";
-        if (responseMessage.Content.Headers.ContentLength.HasValue)
+        // is an incomplete response per RFC 9110 15.3.7 and breaks resume. The
+        // probe path is the exception: its 206 describes the one probe byte, not
+        // the answer this HEAD is owed, so it is rewritten to a plain 200.
+        response.StatusCode = probedLength.HasValue ? StatusCodes.Status200OK : (int)upstreamResponse.StatusCode;
+        response.ContentType = upstreamResponse.Content.Headers.ContentType?.ToString() ?? "application/octet-stream";
+        if (probedLength.HasValue)
         {
-            response.ContentLength = responseMessage.Content.Headers.ContentLength;
+            response.ContentLength = probedLength;
+
+            // The probe proved the upstream honours byte ranges even though it
+            // refuses HEAD; its own Content-Range is not forwarded.
+            response.Headers.AcceptRanges = "bytes";
+        }
+        else
+        {
+            if (upstreamResponse.Content.Headers.ContentLength.HasValue)
+            {
+                response.ContentLength = upstreamResponse.Content.Headers.ContentLength;
+            }
+
+            CopyRangeHeaders(upstreamResponse, response);
         }
 
-        CopyRangeHeaders(responseMessage, response);
-        CopyValidatorHeaders(responseMessage, response);
+        CopyValidatorHeaders(upstreamResponse, response);
 
         var filename = BuildDownloadFilename(item, remoteUri);
         response.Headers.ContentDisposition = new ContentDispositionHeaderValue("attachment")
@@ -198,8 +214,85 @@ public class StrmDownloadInterceptorMiddleware
             FileNameStar = filename
         }.ToString();
 
-        await using var remoteStream = await responseMessage.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+        if (isHeadRequest)
+        {
+            // A HEAD response carries the same headers as the GET would, but no
+            // body (RFC 9110 9.3.2). Kestrel suppresses the body for HEAD and
+            // skips its Content-Length verification for it, so the header set
+            // above reaches the client as-is.
+            return;
+        }
+
+        await using var remoteStream = await upstreamResponse.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
         await CopyWithIdleTimeoutAsync(remoteStream, context, remoteUri).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Issues the upstream request that matches the client's method, with a
+    /// fallback for upstream servers that do not implement HEAD.
+    /// </summary>
+    /// <param name="httpClient">The HTTP client to use.</param>
+    /// <param name="context">The current HTTP context.</param>
+    /// <param name="remoteUri">The URL read from the .strm file.</param>
+    /// <param name="isHeadRequest">Whether the client asked for HEAD.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>
+    /// The upstream response and, when the HEAD fallback was used, the total
+    /// length derived from the probe's Content-Range.
+    /// </returns>
+    private async Task<(HttpResponseMessage Response, long? ProbedLength)> SendUpstreamAsync(
+        HttpClient httpClient,
+        HttpContext context,
+        Uri remoteUri,
+        bool isHeadRequest,
+        CancellationToken cancellationToken)
+    {
+        using var requestMessage = new HttpRequestMessage(isHeadRequest ? HttpMethod.Head : HttpMethod.Get, remoteUri);
+        ForwardRequestHeaders(context.Request, requestMessage);
+
+        var responseMessage = await httpClient
+            .SendAsync(requestMessage, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (!isHeadRequest
+            || (responseMessage.StatusCode != HttpStatusCode.MethodNotAllowed
+                && responseMessage.StatusCode != HttpStatusCode.NotImplemented))
+        {
+            return (responseMessage, null);
+        }
+
+        // Fallback: the upstream rejects HEAD (405/501), which plain file
+        // servers and some streaming backends do. Ask for a single byte
+        // instead and take the total size from the 206's Content-Range, so a
+        // client sizing the download up front still sees the true length
+        // rather than the 172 bytes of the .strm file.
+        //
+        // The probe deliberately overrides any Range the client sent: a HEAD
+        // carrying a Range is answered with the full length here, not with the
+        // range's length. That trade is accepted - HEAD with Range is rare and
+        // this path only runs when the upstream is already non-compliant.
+        _logger.LogDebug(
+            "Upstream {RemoteUri} answered {StatusCode} to HEAD, probing the length with a ranged GET instead",
+            remoteUri,
+            (int)responseMessage.StatusCode);
+        responseMessage.Dispose();
+
+        using var probeRequestMessage = new HttpRequestMessage(HttpMethod.Get, remoteUri);
+        probeRequestMessage.Headers.TryAddWithoutValidation(HeaderNames.Range, "bytes=0-0");
+
+        var probeResponseMessage = await httpClient
+            .SendAsync(probeRequestMessage, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
+            .ConfigureAwait(false);
+
+        var probedLength = probeResponseMessage.Content.Headers.ContentRange?.Length;
+        if (probeResponseMessage.IsSuccessStatusCode && probedLength.HasValue)
+        {
+            return (probeResponseMessage, probedLength);
+        }
+
+        // The upstream answered neither HEAD nor a ranged GET usefully; hand the
+        // probe's status back so the client sees the upstream's own verdict.
+        return (probeResponseMessage, null);
     }
 
     /// <summary>
