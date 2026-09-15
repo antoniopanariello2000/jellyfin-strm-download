@@ -1,15 +1,23 @@
 using System;
 using System.Buffers;
+using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
+using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using MediaBrowser.Controller.Entities;
+using MediaBrowser.Controller.Entities.Movies;
+using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Net;
+using MediaBrowser.Model.Dto;
+using MediaBrowser.Model.Net;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 using HeaderNames = Microsoft.Net.Http.Headers.HeaderNames;
@@ -52,6 +60,15 @@ public class StrmDownloadInterceptorMiddleware
     /// what makes resuming against a changed file safe.
     /// </summary>
     private static readonly string[] ForwardedRequestHeaders = [HeaderNames.Range, HeaderNames.IfRange];
+
+    /// <summary>
+    /// Characters stripped from the offered filename. Path.GetInvalidFileNameChars
+    /// only reflects the host's own rules - on Linux that is just NUL and '/' -
+    /// but the file is saved by the client, commonly on Windows or an SMB share,
+    /// so the stricter Windows set is applied on top.
+    /// </summary>
+    private static readonly char[] InvalidFileNameChars =
+        Path.GetInvalidFileNameChars().Concat(['\\', '/', ':', '*', '?', '"', '<', '>', '|']).Distinct().ToArray();
 
     private static readonly Regex DownloadPathRegex = new(
         @"/Items/(?<id>[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12})/Download/?$",
@@ -215,9 +232,12 @@ public class StrmDownloadInterceptorMiddleware
 
         CopyValidatorHeaders(upstreamResponse, response);
 
-        var filename = BuildDownloadFilename(item, remoteUri);
+        var filename = BuildDownloadFilename(item, remoteUri, upstreamResponse.Content.Headers.ContentType?.MediaType);
         response.Headers.ContentDisposition = new ContentDispositionHeaderValue("attachment")
         {
+            // filename is the ASCII fallback for clients that ignore RFC 5987,
+            // filename* carries the real, UTF-8 encoded name (RFC 6266 4.1).
+            FileName = ToAsciiFallback(filename),
             FileNameStar = filename
         }.ToString();
 
@@ -442,11 +462,207 @@ public class StrmDownloadInterceptorMiddleware
         }
     }
 
-    private static string BuildDownloadFilename(BaseItem item, Uri remoteUri)
+    /// <summary>
+    /// Builds the filename offered to the client. Never derives the extension
+    /// from the item's own path, which is the .strm file.
+    /// </summary>
+    /// <param name="item">The item being downloaded.</param>
+    /// <param name="remoteUri">The URL read from the .strm file.</param>
+    /// <param name="upstreamMediaType">The upstream Content-Type, without parameters.</param>
+    /// <returns>A filename that is safe to write on the client.</returns>
+    private string BuildDownloadFilename(BaseItem item, Uri remoteUri, string? upstreamMediaType)
+        => SanitizeFileName(BuildBaseName(item)) + ResolveExtension(item, remoteUri, upstreamMediaType);
+
+    /// <summary>
+    /// Builds the base name, without extension, from the item's metadata.
+    /// item.Name alone is only the episode title for an episode, which makes
+    /// downloads of different series indistinguishable in a download folder.
+    /// </summary>
+    /// <param name="item">The item being downloaded.</param>
+    /// <returns>The base name.</returns>
+    private static string BuildBaseName(BaseItem item)
     {
-        var remoteExtension = Path.GetExtension(remoteUri.LocalPath);
-        var extension = string.IsNullOrEmpty(remoteExtension) ? Path.GetExtension(item.Path) : remoteExtension;
-        var baseName = string.IsNullOrWhiteSpace(item.Name) ? "download" : item.Name;
-        return string.Concat(baseName, extension).Replace("\"", string.Empty, StringComparison.Ordinal);
+        switch (item)
+        {
+            case Episode episode:
+            {
+                var parts = new List<string>(3);
+                if (!string.IsNullOrWhiteSpace(episode.SeriesName))
+                {
+                    parts.Add(episode.SeriesName);
+                }
+
+                // ParentIndexNumber is the season, IndexNumber the episode.
+                if (episode.ParentIndexNumber.HasValue && episode.IndexNumber.HasValue)
+                {
+                    parts.Add(string.Format(
+                        CultureInfo.InvariantCulture,
+                        "S{0:00}E{1:00}",
+                        episode.ParentIndexNumber.Value,
+                        episode.IndexNumber.Value));
+                }
+
+                if (!string.IsNullOrWhiteSpace(episode.Name))
+                {
+                    parts.Add(episode.Name);
+                }
+
+                if (parts.Count > 0)
+                {
+                    return string.Join(" - ", parts);
+                }
+
+                break;
+            }
+
+            case Movie movie when !string.IsNullOrWhiteSpace(movie.Name):
+            {
+                return movie.ProductionYear.HasValue
+                    ? string.Format(CultureInfo.InvariantCulture, "{0} ({1})", movie.Name, movie.ProductionYear.Value)
+                    : movie.Name;
+            }
+        }
+
+        return string.IsNullOrWhiteSpace(item.Name) ? "download" : item.Name;
+    }
+
+    /// <summary>
+    /// Resolves the file extension, in descending order of trustworthiness:
+    /// the remote URL's own path, the container Jellyfin probed for the item's
+    /// media source, the upstream Content-Type, and finally ".bin". The item's
+    /// own path is never consulted - it is the .strm file, and handing the
+    /// client a .strm is exactly the bug this plugin exists to fix.
+    /// </summary>
+    /// <param name="item">The item being downloaded.</param>
+    /// <param name="remoteUri">The URL read from the .strm file.</param>
+    /// <param name="upstreamMediaType">The upstream Content-Type, without parameters.</param>
+    /// <returns>The extension, including the leading dot.</returns>
+    private string ResolveExtension(BaseItem item, Uri remoteUri, string? upstreamMediaType)
+    {
+        var fromUrl = Path.GetExtension(remoteUri.LocalPath);
+        if (IsUsableExtension(fromUrl))
+        {
+            return fromUrl;
+        }
+
+        foreach (var container in GetMediaSourceContainers(item))
+        {
+            // Container is sometimes a comma separated list of the formats
+            // ffprobe matched, e.g. "mov,mp4,m4a,3gp,3g2,mj2"; the first entry
+            // is the one to offer.
+            var separatorIndex = container.IndexOf(',');
+            var first = (separatorIndex >= 0 ? container[..separatorIndex] : container).Trim();
+            if (first.Length == 0)
+            {
+                continue;
+            }
+
+            var fromContainer = first.StartsWith('.') ? first : "." + first;
+            if (IsUsableExtension(fromContainer))
+            {
+                return fromContainer;
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(upstreamMediaType))
+        {
+            var fromContentType = MimeTypes.ToExtension(upstreamMediaType);
+            if (IsUsableExtension(fromContentType))
+            {
+                return fromContentType!;
+            }
+        }
+
+        return ".bin";
+    }
+
+    /// <summary>
+    /// Reads the containers of the item's media sources, tolerating a failure:
+    /// an unknown extension is a cosmetic problem and must not fail a download
+    /// that is otherwise fine.
+    /// </summary>
+    /// <param name="item">The item being downloaded.</param>
+    /// <returns>The containers, possibly empty.</returns>
+    private IEnumerable<string> GetMediaSourceContainers(BaseItem item)
+    {
+        IReadOnlyList<MediaSourceInfo> mediaSources;
+        try
+        {
+            mediaSources = item.GetMediaSources(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Could not read the media sources of item {ItemId}", item.Id);
+            return [];
+        }
+
+        return mediaSources
+            .Select(mediaSource => mediaSource.Container)
+            .Where(container => !string.IsNullOrWhiteSpace(container))!;
+    }
+
+    /// <summary>
+    /// Gets a value indicating whether an extension can be offered to the
+    /// client. ".strm" never can.
+    /// </summary>
+    /// <param name="extension">The candidate extension.</param>
+    /// <returns>Whether the extension is usable.</returns>
+    private static bool IsUsableExtension(string? extension)
+        => extension is not null
+            && extension.Length > 1
+            && extension[0] == '.'
+            && !string.Equals(extension, ".strm", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Removes characters that are not legal in a filename on the platforms a
+    /// client is likely to save to.
+    /// </summary>
+    /// <param name="value">The raw name.</param>
+    /// <returns>The sanitized name, never empty.</returns>
+    private static string SanitizeFileName(string value)
+    {
+        var builder = new StringBuilder(value.Length);
+        foreach (var character in value)
+        {
+            if (char.IsControl(character) || Array.IndexOf(InvalidFileNameChars, character) >= 0)
+            {
+                continue;
+            }
+
+            builder.Append(character);
+        }
+
+        // Trailing dots and spaces are silently dropped by Windows, which would
+        // detach the extension we are about to append.
+        var sanitized = builder.ToString().Trim().TrimEnd('.', ' ');
+        return sanitized.Length == 0 ? "download" : sanitized;
+    }
+
+    /// <summary>
+    /// Produces the ASCII form used for the plain <c>filename</c> parameter.
+    /// Letters carrying diacritics are folded to their base letter rather than
+    /// dropped, so the name stays readable for clients that ignore
+    /// <c>filename*</c>. Anything else outside ASCII becomes an underscore.
+    /// </summary>
+    /// <param name="value">The sanitized UTF-8 name.</param>
+    /// <returns>An ASCII-only name.</returns>
+    private static string ToAsciiFallback(string value)
+    {
+        // Canonical decomposition splits e.g. "u" + combining diaeresis apart,
+        // so the combining mark can be dropped on its own.
+        var decomposed = value.Normalize(NormalizationForm.FormD);
+        var builder = new StringBuilder(decomposed.Length);
+        foreach (var character in decomposed)
+        {
+            if (CharUnicodeInfo.GetUnicodeCategory(character) == UnicodeCategory.NonSpacingMark)
+            {
+                continue;
+            }
+
+            builder.Append(character <= 0x7F ? character : '_');
+        }
+
+        var ascii = builder.ToString().Trim();
+        return ascii.Length == 0 ? "download" : ascii;
     }
 }
