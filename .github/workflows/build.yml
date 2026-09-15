@@ -1,0 +1,122 @@
+name: Build
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  DOTNET_NOLOGO: 1
+  DOTNET_CLI_TELEMETRY_OPTOUT: 1
+  PROJECT: Jellyfin.Plugin.StrmDownload/Jellyfin.Plugin.StrmDownload.csproj
+  ASSEMBLY: Jellyfin.Plugin.StrmDownload.dll
+  PACKAGE_SLUG: strmdownloadproxy
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Install packaging dependencies
+        run: python3 -m pip install --quiet pyyaml
+
+      - name: Resolve and check the version
+        id: version
+        run: |
+          set -euo pipefail
+          csproj_version=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' "$PROJECT")
+          build_version=$(python3 -c "import yaml;print(yaml.safe_load(open('build.yaml'))['version'])")
+          echo "csproj=$csproj_version build.yaml=$build_version ref=$GITHUB_REF"
+          if [ "$csproj_version" != "$build_version" ]; then
+            echo "::error::Version mismatch: $PROJECT says $csproj_version, build.yaml says $build_version"
+            exit 1
+          fi
+          if [ "$GITHUB_REF_TYPE" = "tag" ] && [ "$GITHUB_REF_NAME" != "v$csproj_version" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match version $csproj_version (expected v$csproj_version)"
+            exit 1
+          fi
+          echo "version=$csproj_version" >> "$GITHUB_OUTPUT"
+
+      # Warnings fail the build: GenerateDocumentationFile is on, so a missing
+      # XML doc comment on a public member would otherwise slip through.
+      - name: Build
+        run: dotnet build -c Release "$PROJECT" --warnaserror
+
+      - name: Publish
+        run: dotnet publish -c Release "$PROJECT" -o ./artifact
+
+      - name: Package
+        id: package
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          staging=$(mktemp -d)
+          python3 .github/scripts/build_meta.py --version "$VERSION" --output "$staging/meta.json"
+          cat "$staging/meta.json"
+          cp "./artifact/$ASSEMBLY" "$staging/"
+          cp images/logo.png "$staging/logo.png"
+
+          zip_name="${PACKAGE_SLUG}_${VERSION}.zip"
+          zip_path="$PWD/$zip_name"
+          (cd "$staging" && zip -r -X "$zip_path" .)
+
+          checksum=$(md5sum "$zip_path" | cut -d' ' -f1)
+          {
+            echo "zip=$zip_name"
+            echo "checksum=$checksum"
+          } >> "$GITHUB_OUTPUT"
+          echo "$zip_name  MD5 $checksum"
+          unzip -l "$zip_path"
+
+      - name: Upload the package as a build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PACKAGE_SLUG }}-${{ steps.version.outputs.version }}
+          path: ${{ steps.package.outputs.zip }}
+          if-no-files-found: error
+
+      - name: Create the release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.package.outputs.zip }}
+          body: |
+            Installierbares Plugin-Paket für Jellyfin.
+
+            MD5: `${{ steps.package.outputs.checksum }}`
+
+      # Only after the release exists, so the sourceUrl in the manifest always
+      # points at a downloadable asset.
+      - name: Add the version to manifest.json
+        if: github.ref_type == 'tag'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          CHECKSUM: ${{ steps.package.outputs.checksum }}
+          ZIP: ${{ steps.package.outputs.zip }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          git fetch origin "$DEFAULT_BRANCH"
+          git checkout "$DEFAULT_BRANCH"
+          python3 .github/scripts/add_manifest_version.py \
+            --version "$VERSION" \
+            --checksum "$CHECKSUM" \
+            --source-url "https://github.com/${GITHUB_REPOSITORY}/releases/download/v${VERSION}/${ZIP}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add manifest.json
+          git commit -m "Add v${VERSION} to the plugin manifest"
+          git push origin "$DEFAULT_BRANCH"

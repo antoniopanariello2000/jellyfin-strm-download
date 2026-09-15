@@ -4,4 +4,5 @@ obj/
 *.user
 .claude/
 Jellyfin.Plugin.StrmDownload/artifact/
+artifact/
 *.zip
