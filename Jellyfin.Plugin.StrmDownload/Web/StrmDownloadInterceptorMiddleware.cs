@@ -17,9 +17,11 @@ namespace Jellyfin.Plugin.StrmDownload.Web;
 /// Jellyfin's own controller, and serves the remote content a .strm file
 /// points to instead of the .strm text file itself. This fixes downloads for
 /// every client (Jellyfin Web, mobile apps, etc.) since they all call the
-/// same native URL - no client-side changes needed. Non-.strm items, missing
-/// items and failed authorization are left untouched and fall through to
-/// Jellyfin's own controller, which handles them exactly as before.
+/// same native URL - no client-side changes needed. Non-.strm items and
+/// missing items are left untouched and fall through to Jellyfin's own
+/// controller, which handles them exactly as before. Authentication and the
+/// user's download permission are checked here, because this middleware runs
+/// before ASP.NET Core's authorization middleware.
 /// </summary>
 public class StrmDownloadInterceptorMiddleware
 {
@@ -73,9 +75,34 @@ public class StrmDownloadInterceptorMiddleware
 
         try
         {
+            // This middleware runs in front of ASP.NET Core's authentication and
+            // authorization middleware, so the [Authorize(Policy = Policies.Download)]
+            // attribute on Jellyfin's own LibraryController.GetDownload never gets a
+            // chance to run for requests we intercept. IAuthorizationContext does not
+            // throw for a missing or unknown token - it returns an AuthorizationInfo
+            // with IsAuthenticated == false - so the result has to be checked here
+            // explicitly, before the item is ever looked up.
             var authInfo = await authContext.GetAuthorizationInfo(context).ConfigureAwait(false);
-            var user = authInfo.User;
+            if (!authInfo.IsAuthenticated)
+            {
+                // Mirror what Jellyfin answers natively on this route without a
+                // valid token. Deliberately not falling through to _next: doing so
+                // would leak whether an item exists and is a .strm file by way of
+                // differing responses.
+                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                return;
+            }
 
+            var user = authInfo.User;
+            if (user is null && !authInfo.IsApiKey)
+            {
+                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                return;
+            }
+
+            // user is null && authInfo.IsApiKey: an API key request has no user
+            // context. Jellyfin's controller falls back to item.CanDownload()
+            // without a user in that case, and so do we (below).
             var item = libraryManager.GetItemById<BaseItem>(itemId, user);
             if (item is null || !string.Equals(Path.GetExtension(item.Path), ".strm", StringComparison.OrdinalIgnoreCase))
             {
