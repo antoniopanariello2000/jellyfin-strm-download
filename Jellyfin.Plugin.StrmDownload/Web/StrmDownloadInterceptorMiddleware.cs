@@ -214,14 +214,46 @@ public class StrmDownloadInterceptorMiddleware
 
             await ProxyStrmDownloadAsync(item, context, httpClientFactory).ConfigureAwait(false);
         }
+        catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
+        {
+            // The client went away mid-download. Normal, not an error, and there
+            // is nobody left to report a status code to. TaskCanceledException
+            // derives from OperationCanceledException, so both land here.
+            _logger.LogDebug("Client aborted the .strm download of item {ItemId}", itemId);
+        }
         catch (Exception ex) when (ex is IOException or HttpRequestException or InvalidOperationException)
         {
             _logger.LogError(ex, "Failed to serve .strm download for item {ItemId}", itemId);
-            if (!context.Response.HasStarted)
-            {
-                context.Response.StatusCode = StatusCodes.Status502BadGateway;
-            }
+            SetErrorStatusOrAbort(context, StatusCodes.Status502BadGateway);
         }
+        catch (Exception ex)
+        {
+            // This middleware sits in front of Jellyfin's exception handling
+            // middleware, so anything not caught here escapes into Kestrel and
+            // the client is left with a dropped connection and no log entry.
+            _logger.LogError(ex, "Unhandled error while serving the .strm download of item {ItemId}", itemId);
+            SetErrorStatusOrAbort(context, StatusCodes.Status500InternalServerError);
+        }
+    }
+
+    /// <summary>
+    /// Reports a failure to the client: a status code while that is still
+    /// possible, otherwise by dropping the connection.
+    /// </summary>
+    /// <param name="context">The current HTTP context.</param>
+    /// <param name="statusCode">The status code to report.</param>
+    private static void SetErrorStatusOrAbort(HttpContext context, int statusCode)
+    {
+        if (!context.Response.HasStarted)
+        {
+            context.Response.StatusCode = statusCode;
+            return;
+        }
+
+        // Headers and part of the body are already on the wire. Changing the
+        // status is impossible, and returning normally would present a truncated
+        // file as a complete one, so the connection is dropped instead.
+        context.Abort();
     }
 
     private async Task ProxyStrmDownloadAsync(BaseItem item, HttpContext context, IHttpClientFactory httpClientFactory)
@@ -462,16 +494,7 @@ public class StrmDownloadInterceptorMiddleware
                 remoteUri,
                 configuredSeconds);
 
-            if (context.Response.HasStarted)
-            {
-                // Headers and part of the body are already on the wire; the only
-                // way to signal the truncation is to drop the connection.
-                context.Abort();
-            }
-            else
-            {
-                context.Response.StatusCode = StatusCodes.Status504GatewayTimeout;
-            }
+            SetErrorStatusOrAbort(context, StatusCodes.Status504GatewayTimeout);
         }
         finally
         {
