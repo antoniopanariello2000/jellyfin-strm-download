@@ -33,6 +33,13 @@ namespace Jellyfin.Plugin.StrmDownload.Web;
 public class StrmDownloadInterceptorMiddleware
 {
     /// <summary>
+    /// Name of the <see cref="HttpClient"/> configured for upstream requests in
+    /// <c>PluginServiceRegistrator</c>: it carries the plugin's User-Agent, asks
+    /// for an unencoded body and caps redirects.
+    /// </summary>
+    public const string HttpClientName = "StrmDownload";
+
+    /// <summary>
     /// Buffer size used while proxying the remote body. Matches the default
     /// of <see cref="Stream.CopyToAsync(Stream)"/>.
     /// </summary>
@@ -165,7 +172,7 @@ public class StrmDownloadInterceptorMiddleware
         }
 
         var isHeadRequest = HttpMethods.IsHead(context.Request.Method);
-        var httpClient = httpClientFactory.CreateClient();
+        var httpClient = httpClientFactory.CreateClient(HttpClientName);
 
         var upstream = await SendUpstreamAsync(httpClient, context, remoteUri, isHeadRequest, cancellationToken).ConfigureAwait(false);
         using var upstreamResponse = upstream.Response;
