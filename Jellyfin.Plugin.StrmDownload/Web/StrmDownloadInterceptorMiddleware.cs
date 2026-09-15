@@ -240,16 +240,45 @@ public class StrmDownloadInterceptorMiddleware
         {
             // Pass the upstream status through unchanged. 416 in particular has
             // to keep its "bytes */<total>" Content-Range, since that is what
-            // lets a client correct an unsatisfiable range (RFC 9110 15.5.17).
+            // lets a client correct an unsatisfiable range (RFC 9110 15.5.17) -
+            // and it is how the Android client recognizes an already complete
+            // download, by comparing its resume offset against the total.
             response.StatusCode = (int)upstreamResponse.StatusCode;
-            CopyRangeHeaders(upstreamResponse, response);
+            CopyAcceptRanges(upstreamResponse, response);
+
+            var errorContentRange = upstreamResponse.Content.Headers.ContentRange;
+            if (errorContentRange is not null)
+            {
+                response.Headers.ContentRange = FormatContentRange(errorContentRange);
+            }
+            else if (upstreamResponse.StatusCode == HttpStatusCode.RequestedRangeNotSatisfiable)
+            {
+                _logger.LogWarning(
+                    "Upstream {RemoteUri} answered 416 without a Content-Range header; clients cannot tell from this whether the download is already complete",
+                    remoteUri);
+            }
+
             return;
         }
 
-        // Both 200 and 206 pass through as they are. A 206 without Content-Range
-        // is an incomplete response per RFC 9110 15.3.7 and breaks resume. The
-        // probe path is the exception: its 206 describes the one probe byte, not
-        // the answer this HEAD is owed, so it is rewritten to a plain 200.
+        // A 206 that reaches the client without a usable Content-Range is worse
+        // than an error: the official Jellyfin Android client reads the header
+        // with requireNotNull and aborts the download before writing a byte.
+        // Settle that before touching the response at all, so the 502 fallback
+        // still has an untouched response to write.
+        string? contentRange = null;
+        if (!probedLength.HasValue && !TryResolveContentRange(upstreamResponse, context.Request, out contentRange))
+        {
+            _logger.LogError(
+                "Upstream {RemoteUri} answered 206 without a usable Content-Range and the total length could not be derived; refusing to pass an incomplete partial response to the client",
+                remoteUri);
+            response.StatusCode = StatusCodes.Status502BadGateway;
+            return;
+        }
+
+        // Both 200 and 206 pass through as they are. The probe path is the
+        // exception: its 206 describes the one probe byte, not the answer this
+        // HEAD is owed, so it is rewritten to a plain 200.
         response.StatusCode = probedLength.HasValue ? StatusCodes.Status200OK : (int)upstreamResponse.StatusCode;
         response.ContentType = upstreamResponse.Content.Headers.ContentType?.ToString() ?? "application/octet-stream";
         if (probedLength.HasValue)
@@ -267,7 +296,11 @@ public class StrmDownloadInterceptorMiddleware
                 response.ContentLength = upstreamResponse.Content.Headers.ContentLength;
             }
 
-            CopyRangeHeaders(upstreamResponse, response);
+            CopyAcceptRanges(upstreamResponse, response);
+            if (contentRange is not null)
+            {
+                response.Headers.ContentRange = contentRange;
+            }
         }
 
         CopyValidatorHeaders(upstreamResponse, response);
@@ -532,24 +565,157 @@ public class StrmDownloadInterceptorMiddleware
     }
 
     /// <summary>
-    /// Copies the range related headers of the upstream response back to the
-    /// client. Applied to error responses too, because a 416 is only actionable
-    /// for the client when it carries Content-Range.
+    /// Copies Accept-Ranges from the upstream response as it was sent.
     /// </summary>
     /// <param name="responseMessage">The upstream response.</param>
     /// <param name="response">The client response.</param>
-    private static void CopyRangeHeaders(HttpResponseMessage responseMessage, HttpResponse response)
+    private static void CopyAcceptRanges(HttpResponseMessage responseMessage, HttpResponse response)
     {
         if (responseMessage.Headers.AcceptRanges.Count > 0)
         {
             response.Headers.AcceptRanges = string.Join(", ", responseMessage.Headers.AcceptRanges);
         }
+    }
 
-        var contentRange = responseMessage.Content.Headers.ContentRange;
-        if (contentRange is not null)
+    /// <summary>
+    /// Determines the Content-Range to send to the client for a successful
+    /// upstream response.
+    /// <para>
+    /// A 206 has to carry "bytes &lt;start&gt;-&lt;end&gt;/&lt;total&gt;" with a
+    /// numeric total. RFC 9110 15.3.7 requires the header at all, and the
+    /// official Jellyfin Android client parses it with requireNotNull and
+    /// rejects a "*" total, so an incomplete one aborts the download before the
+    /// first byte is written. When the upstream omits it, it can still be
+    /// reconstructed for the one case where the total follows unambiguously:
+    /// the client asked for the whole resource from byte 0, so the body is the
+    /// entire resource and Content-Length is its total size.
+    /// </para>
+    /// </summary>
+    /// <param name="responseMessage">The upstream response.</param>
+    /// <param name="request">The incoming client request.</param>
+    /// <param name="contentRange">
+    /// The header value to send, or <c>null</c> when none is needed because the
+    /// response is not a 206.
+    /// </param>
+    /// <returns>
+    /// <c>false</c> when the response is a 206 whose Content-Range is missing or
+    /// unusable and cannot be reconstructed. The caller must not forward such a
+    /// response.
+    /// </returns>
+    private bool TryResolveContentRange(HttpResponseMessage responseMessage, HttpRequest request, out string? contentRange)
+    {
+        contentRange = null;
+        var upstreamContentRange = responseMessage.Content.Headers.ContentRange;
+
+        if (responseMessage.StatusCode != HttpStatusCode.PartialContent)
         {
-            response.Headers.ContentRange = contentRange.ToString();
+            // 200 and friends: forward whatever the upstream sent, if anything.
+            if (upstreamContentRange is not null)
+            {
+                contentRange = FormatContentRange(upstreamContentRange);
+            }
+
+            return true;
         }
+
+        if (upstreamContentRange is not null && upstreamContentRange.HasRange && upstreamContentRange.HasLength)
+        {
+            WarnOnRangeStartMismatch(request, upstreamContentRange);
+            contentRange = FormatContentRange(upstreamContentRange);
+            return true;
+        }
+
+        var contentLength = responseMessage.Content.Headers.ContentLength;
+        if (IsWholeResourceRange(request) && contentLength is > 0)
+        {
+            var total = contentLength.Value;
+            contentRange = string.Format(CultureInfo.InvariantCulture, "bytes 0-{0}/{1}", total - 1, total);
+            _logger.LogWarning(
+                "Upstream answered 206 without a usable Content-Range; reconstructed \"{ContentRange}\" from Content-Length, since the client asked for the whole resource from byte 0",
+                contentRange);
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Gets a value indicating whether the client asked for the entire resource
+    /// starting at byte 0, i.e. an open ended "bytes=0-". Only then does the
+    /// total length follow unambiguously from Content-Length.
+    /// </summary>
+    /// <param name="request">The incoming client request.</param>
+    /// <returns>Whether the request covers the whole resource.</returns>
+    private static bool IsWholeResourceRange(HttpRequest request)
+    {
+        if (!request.Headers.TryGetValue(HeaderNames.Range, out var rangeValues) || rangeValues.Count == 0)
+        {
+            // No Range at all - a 206 is unexpected here, but the body is still
+            // the whole resource.
+            return true;
+        }
+
+        var range = rangeValues.ToString();
+        if (string.IsNullOrWhiteSpace(range))
+        {
+            return true;
+        }
+
+        if (!RangeHeaderValue.TryParse(range, out var parsedRange) || parsedRange.Ranges.Count != 1)
+        {
+            return false;
+        }
+
+        var single = parsedRange.Ranges.First();
+        return single.From == 0 && single.To is null;
+    }
+
+    /// <summary>
+    /// Logs when the upstream's partial response starts somewhere other than
+    /// where the client asked it to. A client resuming a download seeks to the
+    /// offset it requested and would write the bytes to the wrong place.
+    /// </summary>
+    /// <param name="request">The incoming client request.</param>
+    /// <param name="contentRange">The upstream's Content-Range.</param>
+    private void WarnOnRangeStartMismatch(HttpRequest request, ContentRangeHeaderValue contentRange)
+    {
+        if (!request.Headers.TryGetValue(HeaderNames.Range, out var rangeValues)
+            || rangeValues.Count == 0
+            || !RangeHeaderValue.TryParse(rangeValues.ToString(), out var parsedRange)
+            || parsedRange.Ranges.Count != 1)
+        {
+            return;
+        }
+
+        var requestedFrom = parsedRange.Ranges.First().From;
+        if (requestedFrom.HasValue && contentRange.From != requestedFrom)
+        {
+            _logger.LogWarning(
+                "Upstream answered a partial response starting at byte {ActualFrom} although {RequestedFrom} was requested; a resuming client will write to the wrong offset",
+                contentRange.From,
+                requestedFrom);
+        }
+    }
+
+    /// <summary>
+    /// Formats a Content-Range header value explicitly, rather than relying on
+    /// <see cref="ContentRangeHeaderValue.ToString"/>, so the wire format is
+    /// pinned to "&lt;unit&gt; &lt;start&gt;-&lt;end&gt;/&lt;total&gt;" with
+    /// invariant number formatting regardless of the server's culture.
+    /// </summary>
+    /// <param name="contentRange">The value to format.</param>
+    /// <returns>The header value.</returns>
+    private static string FormatContentRange(ContentRangeHeaderValue contentRange)
+    {
+        var unit = string.IsNullOrEmpty(contentRange.Unit) ? "bytes" : contentRange.Unit;
+        var range = contentRange.HasRange
+            ? string.Format(CultureInfo.InvariantCulture, "{0}-{1}", contentRange.From, contentRange.To)
+            : "*";
+        var length = contentRange.HasLength
+            ? contentRange.Length!.Value.ToString(CultureInfo.InvariantCulture)
+            : "*";
+
+        return string.Format(CultureInfo.InvariantCulture, "{0} {1}/{2}", unit, range, length);
     }
 
     /// <summary>
