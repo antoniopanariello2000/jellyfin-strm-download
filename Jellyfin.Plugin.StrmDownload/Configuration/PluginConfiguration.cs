@@ -23,4 +23,11 @@ public class PluginConfiguration : BasePluginConfiguration
     /// disable the timeout.
     /// </summary>
     public int StreamIdleTimeoutSeconds { get; set; } = 60;
+
+    /// <summary>
+    /// Gets or sets the maximum number of .strm downloads proxied at the same
+    /// time. Further requests are rejected with 503 and a Retry-After hint
+    /// rather than queued. Set to 0 for no limit.
+    /// </summary>
+    public int MaxConcurrentDownloads { get; set; }
 }

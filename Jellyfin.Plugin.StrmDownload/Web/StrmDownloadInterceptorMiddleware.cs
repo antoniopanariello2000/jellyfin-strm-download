@@ -51,6 +51,13 @@ public class StrmDownloadInterceptorMiddleware
     public const string HttpClientName = "StrmDownload";
 
     /// <summary>
+    /// Retry-After hint, in seconds, sent with the 503 that rejects a download
+    /// over the configured concurrency limit. A short hint: slots free up as
+    /// soon as any running download finishes.
+    /// </summary>
+    private const int RetryAfterSeconds = 30;
+
+    /// <summary>
     /// Buffer size used while proxying the remote body. Matches the default
     /// of <see cref="Stream.CopyToAsync(Stream)"/>.
     /// </summary>
@@ -101,6 +108,7 @@ public class StrmDownloadInterceptorMiddleware
     /// <param name="httpClientFactory">Instance of the <see cref="IHttpClientFactory"/> interface.</param>
     /// <param name="activityManager">Instance of the <see cref="IActivityManager"/> interface.</param>
     /// <param name="localization">Instance of the <see cref="ILocalizationManager"/> interface.</param>
+    /// <param name="concurrencyLimiter">The download concurrency limiter.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
     public async Task InvokeAsync(
         HttpContext context,
@@ -108,7 +116,8 @@ public class StrmDownloadInterceptorMiddleware
         IAuthorizationContext authContext,
         IHttpClientFactory httpClientFactory,
         IActivityManager activityManager,
-        ILocalizationManager localization)
+        ILocalizationManager localization,
+        DownloadConcurrencyLimiter concurrencyLimiter)
     {
         if (Plugin.Instance is null
             || !Plugin.Instance.Configuration.EnableNativeDownloadHook
@@ -168,6 +177,21 @@ public class StrmDownloadInterceptorMiddleware
             if (!canDownload)
             {
                 context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                return;
+            }
+
+            // Rejecting rather than queueing: a queued request would sit on a
+            // Jellyfin request thread and time out at the client anyway, while a
+            // 503 with Retry-After tells the client what to do about it.
+            using var slot = concurrencyLimiter.TryAcquire();
+            if (slot is null)
+            {
+                _logger.LogWarning(
+                    "Rejecting the .strm download of item {ItemId}: the configured limit of {MaxConcurrentDownloads} concurrent downloads is reached",
+                    itemId,
+                    Plugin.Instance.Configuration.MaxConcurrentDownloads);
+                context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+                context.Response.Headers.RetryAfter = RetryAfterSeconds.ToString(CultureInfo.InvariantCulture);
                 return;
             }
 

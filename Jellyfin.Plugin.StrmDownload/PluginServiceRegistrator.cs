@@ -37,6 +37,7 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
                 AutomaticDecompression = DecompressionMethods.None
             });
 
+        serviceCollection.AddSingleton<DownloadConcurrencyLimiter>();
         serviceCollection.AddSingleton<IStartupFilter, StrmDownloadInterceptorStartupFilter>();
     }
 

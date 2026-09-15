@@ -40,6 +40,18 @@
                             abgebrochen. 0 deaktiviert die &Uuml;berwachung.
                         </div>
                     </div>
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="MaxConcurrentDownloads">
+                            Maximale Anzahl gleichzeitiger Downloads
+                        </label>
+                        <input id="MaxConcurrentDownloads" name="MaxConcurrentDownloads" type="number" is="emby-input" min="0" step="1" />
+                        <div class="fieldDescription">
+                            Begrenzt, wie viele .strm-Downloads gleichzeitig durchgereicht
+                            werden. Weitere Anfragen werden mit 503 und einem
+                            Retry-After-Hinweis abgewiesen statt in eine Warteschlange
+                            gestellt. 0 bedeutet unbegrenzt.
+                        </div>
+                    </div>
                     <div>
                         <button is="emby-button" type="submit" class="raised button-submit block emby-button">
                             <span>Speichern</span>
@@ -57,6 +69,7 @@
                     ApiClient.getPluginConfiguration(StrmDownloadPluginId).then(function (config) {
                         document.querySelector("#EnableNativeDownloadHook").checked = config.EnableNativeDownloadHook;
                         document.querySelector("#StreamIdleTimeoutSeconds").value = config.StreamIdleTimeoutSeconds;
+                        document.querySelector("#MaxConcurrentDownloads").value = config.MaxConcurrentDownloads;
                         Dashboard.hideLoadingMsg();
                     });
                 });
@@ -67,6 +80,7 @@
                     ApiClient.getPluginConfiguration(StrmDownloadPluginId).then(function (config) {
                         config.EnableNativeDownloadHook = document.querySelector("#EnableNativeDownloadHook").checked;
                         config.StreamIdleTimeoutSeconds = parseInt(document.querySelector("#StreamIdleTimeoutSeconds").value, 10) || 0;
+                        config.MaxConcurrentDownloads = parseInt(document.querySelector("#MaxConcurrentDownloads").value, 10) || 0;
                         ApiClient.updatePluginConfiguration(StrmDownloadPluginId, config).then(function (result) {
                             Dashboard.processPluginConfigurationUpdateResult(result);
                         });

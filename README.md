@@ -60,6 +60,7 @@ Dashboard → Plugins → **STRM Download Proxy**:
 |---|---|---|
 | `EnableNativeDownloadHook` | an | Schaltet das Abfangen ab, ohne das Plugin zu deinstallieren. Aus = exakt Jellyfins Standardverhalten. |
 | `StreamIdleTimeoutSeconds` | `60` | Bricht die Übertragung ab, wenn die Gegenstelle so lange keine Daten mehr liefert. Die Zeit wird nach jedem empfangenen Datenblock zurückgesetzt (Idle-, kein Gesamt-Timeout). `0` deaktiviert die Überwachung. |
+| `MaxConcurrentDownloads` | `0` | Begrenzt die Zahl gleichzeitig durchgereichter Downloads. Darüber hinausgehende Anfragen werden mit `503` und `Retry-After` abgewiesen, nicht eingereiht. `0` = unbegrenzt. |
 
 ## Bekannte Einschränkungen
 
