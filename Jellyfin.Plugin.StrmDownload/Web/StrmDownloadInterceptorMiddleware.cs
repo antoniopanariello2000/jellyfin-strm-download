@@ -38,8 +38,7 @@ namespace Jellyfin.Plugin.StrmDownload.Web;
 /// intercepted: Jellyfin's own route is GET-only and answers HEAD with 405
 /// Allow: GET, so a client that wants to size a download up front has nothing
 /// to work with. No known client needs this today - it is offered because the
-/// plugin can answer it correctly, not to work around the 405. Non-.strm items
-/// and
+/// plugin can answer it correctly, not to work around the 405. Non-.strm and
 /// missing items are left untouched and fall through to Jellyfin's own
 /// controller, which handles them exactly as before. Authentication and the
 /// user's download permission are checked here, because this middleware runs
@@ -264,6 +263,20 @@ public class StrmDownloadInterceptorMiddleware
         if (!Uri.TryCreate(remoteUrl, UriKind.Absolute, out var remoteUri))
         {
             _logger.LogError("The .strm file {Path} does not contain a valid absolute URL", item.Path);
+            context.Response.StatusCode = StatusCodes.Status502BadGateway;
+            return;
+        }
+
+        // Only ever fetch over HTTP. Uri.TryCreate happily accepts file://, and
+        // proxying that would turn a writable library folder into a way of
+        // reading arbitrary server files through an authenticated download.
+        if (!string.Equals(remoteUri.Scheme, Uri.UriSchemeHttp, StringComparison.Ordinal)
+            && !string.Equals(remoteUri.Scheme, Uri.UriSchemeHttps, StringComparison.Ordinal))
+        {
+            _logger.LogError(
+                "The .strm file {Path} points at the unsupported scheme {Scheme}; only http and https are proxied",
+                item.Path,
+                remoteUri.Scheme);
             context.Response.StatusCode = StatusCodes.Status502BadGateway;
             return;
         }
