@@ -65,12 +65,38 @@ Dashboard → Plugins → **STRM Download Proxy**:
 
 ## Bekannte Einschränkungen
 
+- **Die offizielle Android-App benennt die Datei lokal trotzdem `.strm`.**
+  `DownloadQueue.prepareMainFile` bildet den Dateinamen aus `item.path` des
+  Server-DTOs und wertet `Content-Disposition` gar nicht aus. Das ist
+  serverseitig nicht lösbar und wurde bewusst nicht umgangen; Details und der
+  vorgeschlagene Weg (Issue in `jellyfin/jellyfin-android`) stehen in
+  [`docs/abnahme.md`](docs/abnahme.md). Die serverseitige Namensbildung greift
+  für Clients, die `Content-Disposition` respektieren.
 - Der Proxy leitet die Datei über den Server (Remote → Jellyfin-Server →
   Client): Das kostet Bandbreite und CPU des Servers, es ist kein Redirect.
 - Das Abfangen geschieht sehr früh in Jellyfins HTTP-Pipeline, vor eventuell
   konfigurierten netzwerk-/IP-basierten Zugriffsbeschränkungen: Für
   `.strm`-Downloads greifen diese Beschränkungen nicht. Authentifizierung und
   die Download-Berechtigung des Benutzers prüft das Plugin dagegen selbst.
+
+## Verhalten gegenüber Clients
+
+Die offizielle Jellyfin-App für Android sendet bei **jedem** Download
+`Range: bytes=<offset>-` — auch beim ersten Versuch mit Offset 0 — und liest
+die Antwort mit `requireNotNull(header("Content-Range"))` für 206 und 416. Eine
+206 ohne diesen Header bricht den Download ab, bevor ein Byte geschrieben wird.
+
+Das Plugin stellt deshalb sicher, dass eine 206 ohne verwendbares
+`Content-Range` den Client nie erreicht: Wo der Header sich aus
+`Content-Length` eindeutig rekonstruieren lässt, wird er rekonstruiert,
+andernfalls antwortet das Plugin mit 502 statt mit einer unbrauchbaren
+Teilantwort. Die vollständige Tabelle steht in
+[`docs/abnahme.md`](docs/abnahme.md).
+
+## Abnahme
+
+Die Tests gegen eine laufende Instanz (curl-Befehle A1–A6, Gerätetests A7/A8)
+und ihr aktueller Stand stehen in [`docs/abnahme.md`](docs/abnahme.md).
 
 ## Build aus dem Quellcode
 
