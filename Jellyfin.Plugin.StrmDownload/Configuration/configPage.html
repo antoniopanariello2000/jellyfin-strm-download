@@ -28,6 +28,18 @@
                             herunter, wie sie ist).
                         </div>
                     </div>
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="StreamIdleTimeoutSeconds">
+                            Leerlauf-Zeit&uuml;berschreitung des Streams (Sekunden)
+                        </label>
+                        <input id="StreamIdleTimeoutSeconds" name="StreamIdleTimeoutSeconds" type="number" is="emby-input" min="0" step="1" />
+                        <div class="fieldDescription">
+                            Bricht die &Uuml;bertragung ab, wenn die Gegenstelle so lange keine
+                            Daten mehr liefert. Die Zeit wird nach jedem empfangenen Datenblock
+                            zur&uuml;ckgesetzt, lange aber gesunde Downloads werden also nicht
+                            abgebrochen. 0 deaktiviert die &Uuml;berwachung.
+                        </div>
+                    </div>
                     <div>
                         <button is="emby-button" type="submit" class="raised button-submit block emby-button">
                             <span>Speichern</span>
@@ -44,6 +56,7 @@
                     Dashboard.showLoadingMsg();
                     ApiClient.getPluginConfiguration(StrmDownloadPluginId).then(function (config) {
                         document.querySelector("#EnableNativeDownloadHook").checked = config.EnableNativeDownloadHook;
+                        document.querySelector("#StreamIdleTimeoutSeconds").value = config.StreamIdleTimeoutSeconds;
                         Dashboard.hideLoadingMsg();
                     });
                 });
@@ -53,6 +66,7 @@
                     Dashboard.showLoadingMsg();
                     ApiClient.getPluginConfiguration(StrmDownloadPluginId).then(function (config) {
                         config.EnableNativeDownloadHook = document.querySelector("#EnableNativeDownloadHook").checked;
+                        config.StreamIdleTimeoutSeconds = parseInt(document.querySelector("#StreamIdleTimeoutSeconds").value, 10) || 0;
                         ApiClient.updatePluginConfiguration(StrmDownloadPluginId, config).then(function (result) {
                             Dashboard.processPluginConfigurationUpdateResult(result);
                         });

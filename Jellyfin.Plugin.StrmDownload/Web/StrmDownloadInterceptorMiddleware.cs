@@ -1,8 +1,10 @@
 using System;
+using System.Buffers;
 using System.IO;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
@@ -25,6 +27,12 @@ namespace Jellyfin.Plugin.StrmDownload.Web;
 /// </summary>
 public class StrmDownloadInterceptorMiddleware
 {
+    /// <summary>
+    /// Buffer size used while proxying the remote body. Matches the default
+    /// of <see cref="Stream.CopyToAsync(Stream)"/>.
+    /// </summary>
+    private const int CopyBufferSize = 81920;
+
     private static readonly Regex DownloadPathRegex = new(
         @"/Items/(?<id>[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12})/Download/?$",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
@@ -180,7 +188,82 @@ public class StrmDownloadInterceptorMiddleware
         }.ToString();
 
         await using var remoteStream = await responseMessage.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
-        await remoteStream.CopyToAsync(response.Body, cancellationToken).ConfigureAwait(false);
+        await CopyWithIdleTimeoutAsync(remoteStream, context, remoteUri).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Copies the upstream body to the client, enforcing an <em>idle</em>
+    /// timeout instead of a total one.
+    /// <para>
+    /// With <see cref="HttpCompletionOption.ResponseHeadersRead"/> the
+    /// <see cref="HttpClient.Timeout"/> only covers the response headers: the
+    /// runtime disposes the timeout token source in FinishSend before the body
+    /// is read, and only buffers when ResponseContentRead is requested. So
+    /// without an explicit timeout here a stalled upstream would pin this
+    /// request, its socket and the upstream connection indefinitely.
+    /// </para>
+    /// <para>
+    /// A total timeout is deliberately not used - it would kill long but
+    /// perfectly healthy downloads. Instead the timer is armed before each
+    /// read and disarmed again as soon as bytes arrive.
+    /// </para>
+    /// </summary>
+    /// <param name="source">The upstream response body.</param>
+    /// <param name="context">The current HTTP context.</param>
+    /// <param name="remoteUri">The remote URI, used for logging only.</param>
+    /// <returns>A task representing the asynchronous operation.</returns>
+    private async Task CopyWithIdleTimeoutAsync(Stream source, HttpContext context, Uri remoteUri)
+    {
+        var configuredSeconds = Plugin.Instance?.Configuration.StreamIdleTimeoutSeconds ?? 0;
+        var idleTimeout = configuredSeconds > 0
+            ? TimeSpan.FromSeconds(configuredSeconds)
+            : Timeout.InfiniteTimeSpan;
+
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted);
+        var buffer = ArrayPool<byte>.Shared.Rent(CopyBufferSize);
+        try
+        {
+            while (true)
+            {
+                // Arm the idle timer for this read only.
+                cts.CancelAfter(idleTimeout);
+                var read = await source.ReadAsync(buffer.AsMemory(0, CopyBufferSize), cts.Token).ConfigureAwait(false);
+
+                // Progress: disarm the timer again so the following write - and
+                // the client's pace - cannot trip it.
+                cts.CancelAfter(Timeout.InfiniteTimeSpan);
+                if (read == 0)
+                {
+                    break;
+                }
+
+                await context.Response.Body.WriteAsync(buffer.AsMemory(0, read), cts.Token).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException) when (!context.RequestAborted.IsCancellationRequested)
+        {
+            // The linked source fired but the client is still there, so this is
+            // our idle timeout rather than a client abort.
+            _logger.LogWarning(
+                "Upstream {RemoteUri} stalled for more than {IdleTimeoutSeconds}s, aborting the .strm download",
+                remoteUri,
+                configuredSeconds);
+
+            if (context.Response.HasStarted)
+            {
+                // Headers and part of the body are already on the wire; the only
+                // way to signal the truncation is to drop the connection.
+                context.Abort();
+            }
+            else
+            {
+                context.Response.StatusCode = StatusCodes.Status504GatewayTimeout;
+            }
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
+        }
     }
 
     private static string BuildDownloadFilename(BaseItem item, Uri remoteUri)

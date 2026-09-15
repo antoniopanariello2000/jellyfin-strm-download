@@ -14,4 +14,13 @@ public class PluginConfiguration : BasePluginConfiguration
     /// default behavior for all downloads, without uninstalling the plugin.
     /// </summary>
     public bool EnableNativeDownloadHook { get; set; } = true;
+
+    /// <summary>
+    /// Gets or sets the idle timeout, in seconds, applied while streaming the
+    /// remote content to the client. The timeout is reset after every chunk
+    /// that is successfully read from the upstream server, so it aborts only
+    /// stalled transfers and never a long but healthy download. Set to 0 to
+    /// disable the timeout.
+    /// </summary>
+    public int StreamIdleTimeoutSeconds { get; set; } = 60;
 }
