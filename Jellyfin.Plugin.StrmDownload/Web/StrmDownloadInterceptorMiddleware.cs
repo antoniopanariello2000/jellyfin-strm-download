@@ -35,8 +35,11 @@ namespace Jellyfin.Plugin.StrmDownload.Web;
 /// points to instead of the .strm text file itself. This fixes downloads for
 /// every client (Jellyfin Web, mobile apps, etc.) since they all call the
 /// same native URL - no client-side changes needed. GET and HEAD are both
-/// intercepted, so a client that sizes the download up front sees the real
-/// media's length rather than the .strm file's. Non-.strm items and
+/// intercepted: Jellyfin's own route is GET-only and answers HEAD with 405
+/// Allow: GET, so a client that wants to size a download up front has nothing
+/// to work with. No known client needs this today - it is offered because the
+/// plugin can answer it correctly, not to work around the 405. Non-.strm items
+/// and
 /// missing items are left untouched and fall through to Jellyfin's own
 /// controller, which handles them exactly as before. Authentication and the
 /// user's download permission are checked here, because this middleware runs
@@ -324,7 +327,8 @@ public class StrmDownloadInterceptorMiddleware
             // A HEAD response carries the same headers as the GET would, but no
             // body (RFC 9110 9.3.2). Kestrel suppresses the body for HEAD and
             // skips its Content-Length verification for it, so the header set
-            // above reaches the client as-is.
+            // above reaches the client as-is. Without this the request would
+            // fall through to Jellyfin's GET-only route and be answered 405.
             return;
         }
 
