@@ -2,7 +2,7 @@
 name: "STRM Download Proxy"
 guid: "ca353088-843b-41cc-932a-c758ab4180ba"
 version: "1.0.0.0"
-targetAbi: "12.0.0.0"
+targetAbi: "12.1.0.0"
 framework: "net10.0"
 overview: "Macht den nativen Download-Button fuer .strm-Elemente nutzbar: laedt das echte Medium statt der .strm-Textdatei"
 description: >

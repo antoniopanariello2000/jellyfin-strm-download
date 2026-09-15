@@ -32,6 +32,7 @@ Plugins ueber ihre GUID), verwendet er eine eigene Identitaet:
 | Name | `Strm Download` | `STRM Download Proxy` |
 | GUID | `a7f4e6b0-3c2d-4e1a-9b8f-6d5c4b3a2f10` | `ca353088-843b-41cc-932a-c758ab4180ba` |
 | Version | `1.0.3.0` | beginnt neu bei `1.0.0.0` |
+| targetAbi | `12.0.0.0` | `12.1.0.0` |
 
 Original und Fork koennen dadurch parallel installiert sein; das ist nicht
 empfohlen, da beide dieselbe Download-Route abfangen wuerden.

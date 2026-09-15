@@ -32,8 +32,9 @@ alle dieselbe native URL aufrufen; clientseitige Änderungen sind nicht nötig.
 
 ## Voraussetzungen
 
-- Jellyfin **12.0** oder neuer (nutzt APIs dieser Version; nicht kompatibel
-  mit der 10.x-Reihe).
+- Jellyfin **12.1.0** (Zielversion, `targetAbi` 12.1.0.0). Gebaut gegen die
+  NuGet-Pakete `Jellyfin.Controller`/`Jellyfin.Model` 12.1.0; nicht kompatibel
+  mit der 10.x-Reihe.
 
 ## Installation
 
