@@ -11,12 +11,15 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Database.Implementations.Entities;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Net;
+using MediaBrowser.Model.Activity;
 using MediaBrowser.Model.Dto;
+using MediaBrowser.Model.Globalization;
 using MediaBrowser.Model.Net;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
@@ -96,12 +99,16 @@ public class StrmDownloadInterceptorMiddleware
     /// <param name="libraryManager">Instance of the <see cref="ILibraryManager"/> interface.</param>
     /// <param name="authContext">Instance of the <see cref="IAuthorizationContext"/> interface.</param>
     /// <param name="httpClientFactory">Instance of the <see cref="IHttpClientFactory"/> interface.</param>
+    /// <param name="activityManager">Instance of the <see cref="IActivityManager"/> interface.</param>
+    /// <param name="localization">Instance of the <see cref="ILocalizationManager"/> interface.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
     public async Task InvokeAsync(
         HttpContext context,
         ILibraryManager libraryManager,
         IAuthorizationContext authContext,
-        IHttpClientFactory httpClientFactory)
+        IHttpClientFactory httpClientFactory,
+        IActivityManager activityManager,
+        ILocalizationManager localization)
     {
         if (Plugin.Instance is null
             || !Plugin.Instance.Configuration.EnableNativeDownloadHook
@@ -162,6 +169,15 @@ public class StrmDownloadInterceptorMiddleware
             {
                 context.Response.StatusCode = StatusCodes.Status403Forbidden;
                 return;
+            }
+
+            // Taking over the route also skips LibraryController.LogDownloadAsync,
+            // so the entry is written here instead. Placed like the controller's:
+            // after the permission check and before the content is served, so a
+            // download that the client abandons half way still shows up.
+            if (user is not null && ShouldLogDownload(context.Request))
+            {
+                await LogDownloadAsync(activityManager, localization, authInfo, item).ConfigureAwait(false);
             }
 
             await ProxyStrmDownloadAsync(item, context, httpClientFactory).ConfigureAwait(false);
@@ -394,6 +410,82 @@ public class StrmDownloadInterceptorMiddleware
         finally
         {
             ArrayPool<byte>.Shared.Return(buffer);
+        }
+    }
+
+    /// <summary>
+    /// Gets a value indicating whether this request should produce an activity
+    /// log entry.
+    /// </summary>
+    /// <param name="request">The incoming client request.</param>
+    /// <returns>Whether to log.</returns>
+    private static bool ShouldLogDownload(HttpRequest request)
+    {
+        // HEAD is a metadata probe, not a download.
+        if (!HttpMethods.IsGet(request.Method))
+        {
+            return false;
+        }
+
+        // One download is many ranged requests; logging every one would bury the
+        // activity log. Count a download once, when it begins: no Range header
+        // at all, or a Range whose first byte position is 0. A resume or a tail
+        // probe ("bytes=-500", "bytes=900-") starts elsewhere and is skipped,
+        // which also means a resumed download is not logged twice.
+        if (!request.Headers.TryGetValue(HeaderNames.Range, out var rangeValues) || rangeValues.Count == 0)
+        {
+            return true;
+        }
+
+        var range = rangeValues.ToString();
+        if (string.IsNullOrWhiteSpace(range))
+        {
+            return true;
+        }
+
+        return RangeHeaderValue.TryParse(range, out var parsedRange)
+            && parsedRange.Ranges.Count > 0
+            && parsedRange.Ranges.First().From == 0;
+    }
+
+    /// <summary>
+    /// Writes the activity log entry Jellyfin's own controller would have
+    /// written, so intercepted downloads still appear in Dashboard > Activity.
+    /// </summary>
+    /// <param name="activityManager">Instance of the <see cref="IActivityManager"/> interface.</param>
+    /// <param name="localization">Instance of the <see cref="ILocalizationManager"/> interface.</param>
+    /// <param name="authInfo">The authorization info of the current request.</param>
+    /// <param name="item">The item being downloaded.</param>
+    /// <returns>A task representing the asynchronous operation.</returns>
+    private async Task LogDownloadAsync(
+        IActivityManager activityManager,
+        ILocalizationManager localization,
+        AuthorizationInfo authInfo,
+        BaseItem item)
+    {
+        try
+        {
+            await activityManager.CreateAsync(new ActivityLog(
+                string.Format(
+                    CultureInfo.InvariantCulture,
+                    localization.GetServerLocalizedString("UserDownloadingItemWithValues"),
+                    authInfo.User!.Username,
+                    item.Name),
+                "UserDownloadingContent",
+                authInfo.UserId)
+            {
+                ShortOverview = string.Format(
+                    CultureInfo.InvariantCulture,
+                    localization.GetServerLocalizedString("AppDeviceValues"),
+                    authInfo.Client,
+                    authInfo.Device),
+                ItemId = item.Id.ToString("N", CultureInfo.InvariantCulture)
+            }).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            // Bookkeeping must never break the download itself.
+            _logger.LogDebug(ex, "Could not write the activity log entry for item {ItemId}", item.Id);
         }
     }
 
