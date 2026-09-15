@@ -22,6 +22,7 @@ using MediaBrowser.Model.Dto;
 using MediaBrowser.Model.Globalization;
 using MediaBrowser.Model.Net;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.Logging;
 using HeaderNames = Microsoft.Net.Http.Headers.HeaderNames;
 using HeaderUtilities = Microsoft.Net.Http.Headers.HeaderUtilities;
@@ -79,6 +80,10 @@ public class StrmDownloadInterceptorMiddleware
     /// </summary>
     private static readonly char[] InvalidFileNameChars =
         Path.GetInvalidFileNameChars().Concat(['\\', '/', ':', '*', '?', '"', '<', '>', '|']).Distinct().ToArray();
+
+    private static readonly Regex ExtensionRegex = new(
+        @"^\.[A-Za-z0-9]{1,16}$",
+        RegexOptions.Compiled);
 
     private static readonly Regex DownloadPathRegex = new(
         @"/Items/(?<id>[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12})/Download/?$",
@@ -809,11 +814,12 @@ public class StrmDownloadInterceptorMiddleware
     }
 
     /// <summary>
-    /// Resolves the file extension, in descending order of trustworthiness:
-    /// the remote URL's own path, the container Jellyfin probed for the item's
-    /// media source, the upstream Content-Type, and finally ".bin". The item's
-    /// own path is never consulted - it is the .strm file, and handing the
-    /// client a .strm is exactly the bug this plugin exists to fix.
+    /// Resolves the file extension, in descending order of trustworthiness: the
+    /// remote URL's "extension" query parameter, the remote URL's own path, the
+    /// container Jellyfin probed for the item's media source, the upstream
+    /// Content-Type, and finally ".bin". The item's own path is never consulted
+    /// - it is the .strm file, and handing the client a .strm is exactly the bug
+    /// this plugin exists to fix.
     /// </summary>
     /// <param name="item">The item being downloaded.</param>
     /// <param name="remoteUri">The URL read from the .strm file.</param>
@@ -821,6 +827,16 @@ public class StrmDownloadInterceptorMiddleware
     /// <returns>The extension, including the leading dot.</returns>
     private string ResolveExtension(BaseItem item, Uri remoteUri, string? upstreamMediaType)
     {
+        // Checked before the path: NzbDAV2, the backend these .strm files point
+        // at, carries the real extension in "?extension=mkv" while its path
+        // carries an opaque id, so Path.GetExtension on the path alone comes back
+        // empty and the download ends up named ".strm".
+        var fromQuery = GetExtensionFromQuery(remoteUri);
+        if (IsUsableExtension(fromQuery))
+        {
+            return fromQuery!;
+        }
+
         var fromUrl = Path.GetExtension(remoteUri.LocalPath);
         if (IsUsableExtension(fromUrl))
         {
@@ -859,6 +875,33 @@ public class StrmDownloadInterceptorMiddleware
     }
 
     /// <summary>
+    /// Reads an "extension" query parameter from the remote URL, if present.
+    /// </summary>
+    /// <param name="remoteUri">The URL read from the .strm file.</param>
+    /// <returns>The extension including a leading dot, or <c>null</c>.</returns>
+    private static string? GetExtensionFromQuery(Uri remoteUri)
+    {
+        if (string.IsNullOrEmpty(remoteUri.Query))
+        {
+            return null;
+        }
+
+        // ParseQuery matches keys case-insensitively and never returns null.
+        if (!QueryHelpers.ParseQuery(remoteUri.Query).TryGetValue("extension", out var values))
+        {
+            return null;
+        }
+
+        var extension = values.ToString().Trim();
+        if (extension.Length == 0)
+        {
+            return null;
+        }
+
+        return extension.StartsWith('.') ? extension : "." + extension;
+    }
+
+    /// <summary>
     /// Reads the containers of the item's media sources, tolerating a failure:
     /// an unknown extension is a cosmetic problem and must not fail a download
     /// that is otherwise fine.
@@ -885,14 +928,16 @@ public class StrmDownloadInterceptorMiddleware
 
     /// <summary>
     /// Gets a value indicating whether an extension can be offered to the
-    /// client. ".strm" never can.
+    /// client. ".strm" never can. Candidates come from a remote URL and from
+    /// upstream headers, so the shape is constrained rather than trusted: a dot
+    /// followed by up to 16 alphanumerics, which covers every real container
+    /// and leaves no room for separators or traversal.
     /// </summary>
     /// <param name="extension">The candidate extension.</param>
     /// <returns>Whether the extension is usable.</returns>
     private static bool IsUsableExtension(string? extension)
         => extension is not null
-            && extension.Length > 1
-            && extension[0] == '.'
+            && ExtensionRegex.IsMatch(extension)
             && !string.Equals(extension, ".strm", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
