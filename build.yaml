@@ -1,28 +1,22 @@
 ---
-name: "Strm Download"
-guid: "a7f4e6b0-3c2d-4e1a-9b8f-6d5c4b3a2f10"
-version: "1.0.3.0"
+name: "STRM Download Proxy"
+guid: "ca353088-843b-41cc-932a-c758ab4180ba"
+version: "1.0.0.0"
 targetAbi: "12.0.0.0"
 framework: "net10.0"
-overview: "Rende scaricabile via il download nativo il contenuto reale puntato dai file .strm"
+overview: "Macht den nativen Download-Button fuer .strm-Elemente nutzbar: laedt das echte Medium statt der .strm-Textdatei"
 description: >
-  Aggiunge il supporto al download del contenuto reale referenziato dai file
-  .strm: intercetta la richiesta di download nativa di Jellyfin (per qualsiasi
-  client, non solo Jellyfin Web) e, per gli elementi risolti da un file .strm,
-  scarica dal server il file remoto invece del piccolo file di testo .strm.
+  Fork von HLabSolutions/jellyfin-strm-download mit eigener Plugin-Identitaet.
+  Das Plugin faengt die native Download-Anfrage von Jellyfin ab (fuer jeden
+  Client, nicht nur Jellyfin Web) und liefert fuer Elemente, die aus einer
+  .strm-Datei aufgeloest wurden, den Inhalt der dort hinterlegten URL aus
+  statt der kleinen .strm-Textdatei.
 category: "General"
-owner: "HLabSolutions"
-imageUrl: "https://raw.githubusercontent.com/HLabSolutions/jellyfin-strm-download/master/images/logo.png"
+owner: "cosmicflow2512"
+imageUrl: "https://raw.githubusercontent.com/cosmicflow2512/jellyfin-strm-download/master/images/logo.png"
 artifacts:
 - "Jellyfin.Plugin.StrmDownload.dll"
 - "meta.json"
 - "logo.png"
 changelog: >
-  - 1.0.3.0: Aggiunto il logo del plugin (visibile in Dashboard > Plugin e
-    nel Catalogo).
-  - 1.0.2.0: Riprogettato per intercettare l'endpoint nativo di download a
-    livello di middleware, cosi' funziona per tutti i client (non solo
-    Jellyfin Web).
-  - 1.0.1.0: Ricompilato per Jellyfin 12.0 (net10.0).
-  - 1.0.0.0: Prima versione. Download proxy per i file .strm e hook del
-    pulsante Download nativo in Jellyfin Web.
+  - 1.0.0.0: Erste Version des Forks.

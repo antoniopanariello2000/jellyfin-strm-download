@@ -1,7 +1,7 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="de">
 <head>
-    <title>Strm Download</title>
+    <title>STRM Download Proxy</title>
 </head>
 <body>
     <div id="StrmDownloadConfigPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-input,emby-button,emby-checkbox">
@@ -9,34 +9,35 @@
             <div class="content-primary">
                 <form id="StrmDownloadConfigForm">
                     <div class="verticalSection">
-                        <h2>Strm Download</h2>
+                        <h2>STRM Download Proxy</h2>
                         <p>
-                            Quando abilitato, qualunque richiesta di download nativo
-                            (Jellyfin Web, app mobile, ecc.) per un elemento basato su un
-                            file .strm scaricherà il contenuto reale puntato dal file invece
-                            del piccolo file di testo .strm stesso.
+                            Wenn aktiviert, l&auml;dt jede native Download-Anfrage
+                            (Jellyfin Web, Mobil-Apps usw.) f&uuml;r ein Element auf Basis einer
+                            .strm-Datei den tats&auml;chlichen Inhalt herunter, auf den die Datei
+                            verweist, statt der kleinen .strm-Textdatei selbst.
                         </p>
                     </div>
                     <div class="checkboxContainer checkboxContainer-withDescription">
                         <label>
                             <input id="EnableNativeDownloadHook" type="checkbox" is="emby-checkbox" />
-                            <span>Abilita l'intercettazione del download nativo</span>
+                            <span>Abfangen des nativen Downloads aktivieren</span>
                         </label>
                         <div class="fieldDescription checkboxFieldDescription">
-                            Se disattivata, il download nativo torna al comportamento di
-                            default di Jellyfin (scarica il file .strm cos&igrave; com'&egrave;).
+                            Wenn deaktiviert, f&auml;llt der native Download auf das
+                            Standardverhalten von Jellyfin zur&uuml;ck (l&auml;dt die .strm-Datei so
+                            herunter, wie sie ist).
                         </div>
                     </div>
                     <div>
                         <button is="emby-button" type="submit" class="raised button-submit block emby-button">
-                            <span>Salva</span>
+                            <span>Speichern</span>
                         </button>
                     </div>
                 </form>
             </div>
         </div>
         <script>
-            var StrmDownloadPluginId = "a7f4e6b0-3c2d-4e1a-9b8f-6d5c4b3a2f10";
+            var StrmDownloadPluginId = "ca353088-843b-41cc-932a-c758ab4180ba";
 
             document.querySelector("#StrmDownloadConfigPage")
                 .addEventListener("pageshow", function () {

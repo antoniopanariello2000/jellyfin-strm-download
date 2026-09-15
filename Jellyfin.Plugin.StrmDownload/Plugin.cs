@@ -26,10 +26,10 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
     }
 
     /// <inheritdoc />
-    public override string Name => "Strm Download";
+    public override string Name => "STRM Download Proxy";
 
     /// <inheritdoc />
-    public override Guid Id => Guid.Parse("a7f4e6b0-3c2d-4e1a-9b8f-6d5c4b3a2f10");
+    public override Guid Id => Guid.Parse("ca353088-843b-41cc-932a-c758ab4180ba");
 
     /// <summary>
     /// Gets the current plugin instance.

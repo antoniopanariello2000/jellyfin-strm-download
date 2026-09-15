@@ -1,79 +1,81 @@
-# Strm Download
+# STRM Download Proxy
 
 <p align="center">
-  <img src="images/logo.png" alt="Strm Download logo" width="128" height="128">
+  <img src="images/logo.png" alt="STRM Download Proxy Logo" width="128" height="128">
 </p>
 
-Plugin per [Jellyfin](https://jellyfin.org) che rende utilizzabile il pulsante
-**Download** nativo anche sugli elementi risolti da un file `.strm`.
+Plugin für [Jellyfin](https://jellyfin.org), das den nativen **Download**-Button
+auch für Elemente nutzbar macht, die aus einer `.strm`-Datei aufgelöst wurden.
 
-## Il problema
+> Fork von [HLabSolutions/jellyfin-strm-download](https://github.com/HLabSolutions/jellyfin-strm-download)
+> (Ausgangscommit `019ac08`, Version 1.0.3.0) mit eigener Plugin-GUID.
+> Zur Lizenzlage siehe [NOTICE.md](NOTICE.md).
 
-Un file `.strm` è un piccolo file di testo che contiene un URL al posto del
-file video vero e proprio. Jellyfin lo riproduce correttamente, ma il suo
-endpoint di download nativo (`Items/{itemId}/Download`) scarica semplicemente
-il file così com'è su disco — quindi, per un elemento `.strm`, il client
-riceve poche righe di testo invece del video, e app come Moonfin rifiutano il
-file con un errore tipo *"Downloaded file signature does not match extension"*.
+## Das Problem
 
-## Cosa fa questo plugin
+Eine `.strm`-Datei ist eine kleine Textdatei, die anstelle des eigentlichen
+Videos eine URL enthält. Jellyfin spielt sie korrekt ab, aber der native
+Download-Endpunkt `GET /Items/{itemId}/Download` liefert schlicht die Datei
+aus, wie sie auf dem Datenträger liegt — für ein `.strm`-Element bekommt der
+Client also ein paar Zeilen Text statt des Videos.
 
-Intercetta la richiesta di download nativa **prima** che raggiunga il
-controller di Jellyfin: se l'elemento è un file `.strm`, legge l'URL al suo
-interno e fa da proxy, scaricando il contenuto reale dal server remoto e
-inoltrandolo al client (con supporto alle richieste `Range`, per il resume).
-Per tutto il resto (elementi non-`.strm`, permessi, autenticazione) il
-comportamento nativo di Jellyfin resta invariato.
+## Was das Plugin tut
 
-Funziona per **qualsiasi client** — Jellyfin Web, app mobile (Moonfin,
-Findroid, Infuse, ecc.), Kodi — perché tutti chiamano lo stesso URL nativo;
-non serve alcuna modifica lato client.
+Es fängt die native Download-Anfrage ab, **bevor** sie Jellyfins Controller
+erreicht: Ist das Element eine `.strm`-Datei, wird die darin enthaltene URL
+gelesen und der Inhalt vom entfernten Server zum Client durchgereicht
+(inklusive `Range`-Unterstützung für Resume). Für alles andere
+(Nicht-`.strm`-Elemente) bleibt Jellyfins natives Verhalten unverändert.
 
-## Requisiti
+Das funktioniert für **jeden Client** — Jellyfin Web, Mobil-Apps, Kodi —, weil
+alle dieselbe native URL aufrufen; clientseitige Änderungen sind nicht nötig.
 
-- Jellyfin **12.0** o successivo (usa API introdotte in questa versione;
-  non è compatibile con le serie 10.x).
+## Voraussetzungen
 
-## Installazione
+- Jellyfin **12.0** oder neuer (nutzt APIs dieser Version; nicht kompatibel
+  mit der 10.x-Reihe).
 
-1. In Jellyfin: **Dashboard → Plugin → Repository → aggiungi repository**
-   con questo URL:
+## Installation
+
+1. In Jellyfin: **Dashboard → Plugins → Repositories → Repository hinzufügen**
+   mit dieser URL:
 
    ```
-   https://raw.githubusercontent.com/HLabSolutions/jellyfin-strm-download/master/manifest.json
+   https://raw.githubusercontent.com/cosmicflow2512/jellyfin-strm-download/master/manifest.json
    ```
 
-2. Vai su **Catalogo**, cerca **Strm Download**, installa.
-3. Riavvia il server.
+2. Unter **Katalog** nach **STRM Download Proxy** suchen und installieren.
+3. Server neu starten.
 
-In alternativa, per un'installazione manuale: scarica lo zip dell'
-[ultima release](https://github.com/HLabSolutions/jellyfin-strm-download/releases/latest)
-ed estrailo in `plugins/StrmDownload_<versione>/` nella cartella dati di
-Jellyfin, poi riavvia il server.
+Alternativ manuell: das ZIP der
+[neuesten Release](https://github.com/cosmicflow2512/jellyfin-strm-download/releases/latest)
+herunterladen und nach `plugins/StrmDownload_<version>/` im Jellyfin-Datenordner
+entpacken, dann den Server neu starten.
 
-## Configurazione
+## Konfiguration
 
-Dashboard → Plugin → **Strm Download**: un unico interruttore
-("Abilita l'intercettazione del download nativo") permette di disattivare il
-plugin senza disinstallarlo, per tornare al comportamento predefinito di
-Jellyfin in caso di problemi.
+Dashboard → Plugins → **STRM Download Proxy**:
 
-## Limitazioni note
+| Option | Default | Bedeutung |
+|---|---|---|
+| `EnableNativeDownloadHook` | an | Schaltet das Abfangen ab, ohne das Plugin zu deinstallieren. Aus = exakt Jellyfins Standardverhalten. |
 
-- Il proxy fa passare il file dal server (remoto → server Jellyfin → client):
-  usa banda e CPU del server, non è un semplice redirect.
-- L'intercettazione avviene molto presto nella pipeline HTTP di Jellyfin,
-  prima delle eventuali restrizioni di accesso per rete/IP configurate sul
-  server: per i soli download di file `.strm`, quelle restrizioni non si
-  applicano. Tutti gli altri controlli (autenticazione, permessi di download
-  dell'utente) restano invariati.
+## Bekannte Einschränkungen
 
-## Build da sorgente
+- Der Proxy leitet die Datei über den Server (Remote → Jellyfin-Server →
+  Client): Das kostet Bandbreite und CPU des Servers, es ist kein Redirect.
+- Das Abfangen geschieht sehr früh in Jellyfins HTTP-Pipeline, vor eventuell
+  konfigurierten netzwerk-/IP-basierten Zugriffsbeschränkungen: Für
+  `.strm`-Downloads greifen diese Beschränkungen nicht. Authentifizierung und
+  die Download-Berechtigung des Benutzers prüft das Plugin dagegen selbst.
+
+## Build aus dem Quellcode
 
 ```
+dotnet build -c Release
 dotnet publish -c Release -o ./artifact
 ```
 
-Il pacchetto per una release (zip installabile) contiene
-`Jellyfin.Plugin.StrmDownload.dll`, `meta.json` e `logo.png` allo stesso
-livello.
+Das Release-Paket (installierbares ZIP) enthält
+`Jellyfin.Plugin.StrmDownload.dll`, `meta.json` und `logo.png` auf derselben
+Ebene.
